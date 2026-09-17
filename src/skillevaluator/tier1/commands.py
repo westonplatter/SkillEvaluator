@@ -139,6 +139,7 @@ def run_validation(
     use_llm: bool = False,
     llm_verify: bool = False,
     min_score: int = 70,
+    quality_config: Path | None = None,
     previous_version: str | None = None,
     policy: ValidationPolicy | None = None,
     content_type: str | None = None,
@@ -191,7 +192,7 @@ def run_validation(
         return [_as_result(v.name, v.description, v.validate, target_path)]
 
     def _quality_results() -> list[ValidationResult]:
-        v = QualityScoreValidator(min_score=min_score)
+        v = QualityScoreValidator(min_score=min_score, quality_config=quality_config)
         return [_as_result(v.name, v.description, v.validate, target_path)]
 
     def _lint_results() -> list[ValidationResult]:
@@ -271,8 +272,8 @@ def run_validation(
     return results
 
 
-def run_quality_check(target_path: Path, *, min_score: int = 70) -> list[ValidationResult]:
-    validator = QualityScoreValidator(min_score=min_score)
+def run_quality_check(target_path: Path, *, min_score: int = 70, quality_config: Path | None = None) -> list[ValidationResult]:
+    validator = QualityScoreValidator(min_score=min_score, quality_config=quality_config)
     return [_as_result(validator.name, validator.description, validator.validate, target_path)]
 
 
