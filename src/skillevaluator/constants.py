@@ -384,7 +384,6 @@ QUALITY_GRADE_THRESHOLDS = [(90, "A"), (80, "B"), (70, "C"), (60, "D"), (0, "F")
 QUALITY_DEFAULT_MIN_SCORE = 70
 QUALITY_MAX_BODY_LINES = 500
 
-QUALITY_RESERVED_NAMES = ["anthropic", "claude"]
 
 QUALITY_EXCLUDED_DIRS = frozenset(
     {
