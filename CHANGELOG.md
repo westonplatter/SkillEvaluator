@@ -6,6 +6,22 @@ All notable changes to SkillEvaluator are documented in this file.
 
 ### Added
 
+- Add an `efficiency` section to the `--quality-config` file with a
+  `token_budget` rule, so the 5,000-token recommendation for `SKILL.md` is no
+  longer fixed in code. The rule sets `max_tokens`, `points`, `message`, and
+  `suggestion`; `points: 0` turns it off. The section is optional and overlays
+  the packaged values the same way `error_handling` does, so a file that sets
+  only `max_tokens` changes nothing else. Reports show the limit in force as
+  `recommended_max_tokens`. Scores are unchanged without a custom file. The
+  finding message is reworded: the estimate and the limit now follow the
+  message (`Large skill. ...: 6200 tokens, recommended max <5000`) instead of
+  sitting inside it. The packaged `quality_config` digest changes once, because
+  `quality-default.yaml` gained the section. The
+  `QUALITY_RECOMMENDED_MAX_TOKENS` constant is removed; read
+  `load_quality_config()["efficiency"]["token_budget"]["max_tokens"]` instead.
+  A `QualityScoreResult` built directly, without the validator, no longer
+  reports `recommended_max_tokens`.
+
 - Add an `error_handling` section to the `--quality-config` file for
   Reliability's three error-handling rules: the `SKILL.md` mention check and
   the `scripts` and `lib` code checks. Each sets `points`, `message`,
