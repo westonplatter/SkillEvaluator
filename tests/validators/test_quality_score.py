@@ -1862,6 +1862,170 @@ def _reserved_name_issues(result) -> list[dict]:
     return [issue for issue in issues if "reserved" in issue["message"].lower()]
 
 
+def _discoverability_issues(result) -> list[dict]:
+    return result.metadata["quality_scores"]["dimensions"]["discoverability"]["issues"]
+
+
+def _discoverability_score(result) -> float:
+    return result.metadata["quality_scores"]["dimensions"]["discoverability"]["score"]
+
+
+def _write_named_skill(tmp_path: Path, name: str, body: str = "## Purpose\n\nParse logs.\n") -> Path:
+    skill_dir = tmp_path / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Use for parsing application logs\n---\n\n# Skill\n\n{body}",
+        encoding="utf-8",
+    )
+    return skill_dir
+
+
+BROAD_DESCRIPTION = (
+    "Use this to process and review the CSV exports that pile up in large reporting folders over a quarter, avoid for logs"
+)
+
+# One skill per Discoverability rule that fires it with the packaged config, and the message it gets.
+DISCOVERABILITY_CASES = {
+    "description_too_long": (
+        lambda tmp: _write_described_skill(tmp, "Use for " + "a" * 200),
+        "Description very long (recommend 50-150 chars): 208 chars, maximum 200",
+    ),
+    "missing_trigger": (
+        lambda tmp: _write_described_skill(tmp, "Parses application logs into tables"),
+        "Description doesn't mention WHEN to use this skill",
+    ),
+    "vague_words": (
+        lambda tmp: _write_described_skill(tmp, "Use for parsing logs and other stuff"),
+        "Description contains vague words",
+    ),
+    "first_or_second_person": (
+        lambda tmp: _write_described_skill(tmp, "Use for parsing your application logs"),
+        "Description uses first/second person",
+    ),
+    "broad_description": (
+        lambda tmp: _write_described_skill(tmp, BROAD_DESCRIPTION),
+        "Broad description without negative triggers may cause over-triggering",
+    ),
+    "purpose_section": (
+        lambda tmp: _write_described_skill(tmp, "Use for parsing application logs"),
+        "No '## Purpose' section",
+    ),
+    "name_too_short": (lambda tmp: _write_named_skill(tmp, "logs"), "Skill name very short: 'logs'"),
+    "name_convention": (
+        lambda tmp: _write_named_skill(tmp, "Log_Parser"),
+        "Skill name not following convention: 'Log_Parser'",
+    ),
+}
+
+
+class TestDiscoverabilityRulesConfig:
+    @pytest.mark.parametrize("rule", sorted(DISCOVERABILITY_CASES))
+    def test_packaged_rule_keeps_its_former_points_severity_and_suggestion(self, tmp_path: Path, rule: str):
+        make_skill, message = DISCOVERABILITY_CASES[rule]
+        packaged = load_quality_config()["discoverability"][rule]
+
+        (issue,) = [i for i in _discoverability_issues(_validate_with(make_skill(tmp_path), tmp_path)) if i["message"] == message]
+
+        assert issue["deduction"] == packaged["points"]
+        assert issue["suggestion"] == packaged["suggestion"]
+        expected_severity = "info" if rule in {"description_too_long", "missing_trigger", "broad_description", "purpose_section"} else "warning"
+        assert issue["severity"] == expected_severity
+
+    @pytest.mark.parametrize("rule", sorted(DISCOVERABILITY_CASES))
+    def test_zero_points_turns_the_rule_off_without_changing_other_rules(self, tmp_path: Path, rule: str):
+        make_skill, message = DISCOVERABILITY_CASES[rule]
+        skill_dir = make_skill(tmp_path)
+        packaged_points = load_quality_config()["discoverability"][rule]["points"]
+
+        default = _validate_with(skill_dir, tmp_path)
+        disabled = _validate_with(skill_dir, tmp_path, f"discoverability:\n  {rule}:\n    points: 0\n")
+
+        def others(result) -> list[str]:
+            return [i["message"] for i in _discoverability_issues(result) if i["message"] != message]
+
+        assert message in [i["message"] for i in _discoverability_issues(default)]
+        assert message not in [i["message"] for i in _discoverability_issues(disabled)]
+        assert others(disabled) == others(default)
+        assert _discoverability_score(disabled) == _discoverability_score(default) + packaged_points
+
+    def test_custom_maximum_moves_the_long_description_threshold(self, tmp_path: Path):
+        skill_dir = _write_described_skill(tmp_path, "Use for " + "a" * 200)
+
+        raised = _validate_with(skill_dir, tmp_path, "discoverability:\n  description_too_long:\n    max_chars: 208\n")
+        lowered = _validate_with(skill_dir, tmp_path, "discoverability:\n  description_too_long:\n    max_chars: 207\n")
+
+        assert not [i for i in _discoverability_issues(raised) if "maximum" in i["message"]]
+        (issue,) = [i for i in _discoverability_issues(lowered) if "maximum" in i["message"]]
+        assert issue["message"].endswith(": 208 chars, maximum 207")
+
+    def test_short_description_is_not_also_reported_as_long(self, tmp_path: Path):
+        config = (
+            "discoverability:\n  description_too_short:\n    min_chars: 40\n"
+            "  description_too_long:\n    max_chars: 40\n"
+        )
+
+        result = _validate_with(_write_described_skill(tmp_path, "Use for parsing application logs"), tmp_path, config)
+
+        messages = [i["message"] for i in _discoverability_issues(result)]
+        assert any("chars, minimum 40" in m for m in messages)
+        assert not any("maximum" in m for m in messages)
+
+    def test_custom_trigger_terms_replace_the_packaged_list(self, tmp_path: Path):
+        skill_dir = _write_described_skill(tmp_path, "Parses application logs into tables")
+        message = DISCOVERABILITY_CASES["missing_trigger"][1]
+
+        result = _validate_with(skill_dir, tmp_path, "discoverability:\n  missing_trigger:\n    terms: [parses]\n")
+
+        assert message not in [i["message"] for i in _discoverability_issues(result)]
+
+    def test_custom_negative_terms_clear_a_broad_description(self, tmp_path: Path):
+        skill_dir = _write_described_skill(tmp_path, BROAD_DESCRIPTION)
+        message = DISCOVERABILITY_CASES["broad_description"][1]
+
+        result = _validate_with(
+            skill_dir, tmp_path, "discoverability:\n  broad_description:\n    negative_terms: [avoid for]\n"
+        )
+
+        assert message not in [i["message"] for i in _discoverability_issues(result)]
+
+    def test_broad_description_length_gate_is_strictly_greater_than(self, tmp_path: Path):
+        skill_dir = _write_described_skill(tmp_path, BROAD_DESCRIPTION)
+        message = DISCOVERABILITY_CASES["broad_description"][1]
+        config = "discoverability:\n  broad_description:\n    over_chars: {}\n"
+
+        at_length = _validate_with(skill_dir, tmp_path, config.format(len(BROAD_DESCRIPTION)))
+        below_length = _validate_with(skill_dir, tmp_path, config.format(len(BROAD_DESCRIPTION) - 1))
+
+        assert message not in [i["message"] for i in _discoverability_issues(at_length)]
+        assert message in [i["message"] for i in _discoverability_issues(below_length)]
+
+    def test_custom_purpose_heading_is_used(self, tmp_path: Path):
+        skill_dir = _write_named_skill(tmp_path, "log-parser", body="## Overview\n\nParse logs.\n")
+        config = (
+            "discoverability:\n  purpose_section:\n    heading: '## Overview'\n"
+            "    message: No overview section\n"
+        )
+
+        default = _validate_with(skill_dir, tmp_path)
+        custom = _validate_with(skill_dir, tmp_path, config)
+
+        assert "No '## Purpose' section" in [i["message"] for i in _discoverability_issues(default)]
+        assert [i["message"] for i in _discoverability_issues(custom) if "section" in i["message"]] == []
+
+    def test_custom_name_minimum_and_messages_are_used(self, tmp_path: Path):
+        skill_dir = _write_named_skill(tmp_path, "logs")
+        config = (
+            "discoverability:\n  name_too_short:\n    min_chars: 4\n"
+            "  name_convention:\n    message: Name breaks convention\n"
+        )
+
+        lowered = _validate_with(skill_dir, tmp_path, config)
+        bad_name = _validate_with(_write_named_skill(tmp_path / "bad", "Log_Parser"), tmp_path, config)
+
+        assert not [i for i in _discoverability_issues(lowered) if "very short" in i["message"]]
+        assert "Name breaks convention: 'Log_Parser'" in [i["message"] for i in _discoverability_issues(bad_name)]
+
+
 class TestCorrectnessReservedNameConfig:
     def test_packaged_rule_reports_the_matched_term_as_a_gate_failure(self, tmp_path: Path):
         from skillevaluator.models.result import Severity

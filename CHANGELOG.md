@@ -147,6 +147,23 @@ All notable changes to SkillEvaluator are documented in this file.
   `load_quality_config()["efficiency"]["token_budget"]["max_tokens"]` instead.
   A `QualityScoreResult` built directly, without the validator, no longer
   reports `recommended_max_tokens`.
+- Move the remaining Discoverability rules into the `discoverability` section
+  of the `--quality-config` file, so every Discoverability rule is now set
+  there: `description_too_long` (`max_chars`), `missing_trigger`,
+  `vague_words` and `first_or_second_person` (`terms`), `broad_description`
+  (`over_chars`, `terms`, `negative_terms`), `purpose_section` (`heading`),
+  `name_too_short` (`min_chars`) and `name_convention`. Each rule also sets
+  `points`, `message` and `suggestion`, and `points: 0` turns it off. Each
+  rule's settings hold every threshold and word list it uses; severities and
+  the skill-name pattern stay in code. Scores, severities and finding order
+  are unchanged without a custom file. A custom file whose
+  `description_too_short.min_chars` is greater than
+  `description_too_long.max_chars` is now a usage error. The long-description
+  message is reworded to match the short one: `Description very long
+  (recommend 50-150 chars): 254 chars, maximum 200` instead of `Description
+  very long (254 chars, recommend 50-150)`. Other messages are unchanged. The
+  packaged `quality_config` digest changes once, because
+  `quality-default.yaml` gained the rules.
 
 - Tier 1 **Incomplete referenced artifact analysis (AE1)** findings from
   SkillSpector now say why SkillSpector stopped inspecting the file that a skill

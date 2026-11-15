@@ -85,10 +85,73 @@ class DescriptionTooShortRule(TypedDict):
     min_chars: int
 
 
+class DescriptionTooLongRule(TypedDict):
+    """Deduction when the frontmatter description is longer than max_chars."""
+
+    points: int | float
+    message: str
+    suggestion: str
+    max_chars: int
+
+
+class TermsRule(TypedDict):
+    """Deduction decided by whether a text contains any of the terms (whole word or phrase, any case)."""
+
+    points: int | float
+    message: str
+    suggestion: str
+    terms: list[str]
+
+
+class BroadDescriptionRule(TypedDict):
+    """Deduction for a description over over_chars with a term and none of the negative_terms."""
+
+    points: int | float
+    message: str
+    suggestion: str
+    over_chars: int
+    terms: list[str]
+    negative_terms: list[str]
+
+
+class HeadingRule(TypedDict):
+    """Deduction when SKILL.md does not contain the heading (case-sensitive substring)."""
+
+    points: int | float
+    message: str
+    suggestion: str
+    heading: str
+
+
+class NameTooShortRule(TypedDict):
+    """Deduction when the skill directory name is shorter than min_chars."""
+
+    points: int | float
+    message: str
+    suggestion: str
+    min_chars: int
+
+
+class PlainRule(TypedDict):
+    """A rule whose condition is fixed in code; only its deduction and text are configurable."""
+
+    points: int | float
+    message: str
+    suggestion: str
+
+
 class DiscoverabilityConfig(TypedDict):
     """Discoverability rules; a rule with points 0 is skipped."""
 
     description_too_short: DescriptionTooShortRule
+    description_too_long: DescriptionTooLongRule
+    missing_trigger: TermsRule
+    vague_words: TermsRule
+    first_or_second_person: TermsRule
+    broad_description: BroadDescriptionRule
+    purpose_section: HeadingRule
+    name_too_short: NameTooShortRule
+    name_convention: PlainRule
 
 
 class ReservedNameRule(TypedDict):
@@ -178,12 +241,15 @@ def _validate_positive_int(value: object, source: str, location: str) -> int:
     return value
 
 
+# Terms are matched as whole words or phrases in any case, so entries differing only in case repeat.
+_validate_terms = partial(_validate_entries, ignore_case=True)
+
 # Sections made of named rules. Every rule takes points, message and suggestion, plus the
 # rule-specific settings listed here, each with the function that validates it.
 _SettingValidator = Callable[[object, str, str], object]
 _RULE_SECTIONS: dict[str, dict[str, dict[str, _SettingValidator]]] = {
     "error_handling": {
-        "mentioned": {"terms": partial(_validate_entries, ignore_case=True)},
+        "mentioned": {"terms": _validate_terms},
         "scripts": {"markers": partial(_validate_entries, ignore_case=False)},
         "lib": {"markers": partial(_validate_entries, ignore_case=False)},
     },
@@ -192,12 +258,35 @@ _RULE_SECTIONS: dict[str, dict[str, dict[str, _SettingValidator]]] = {
     },
     "discoverability": {
         "description_too_short": {"min_chars": _validate_positive_int},
+        "description_too_long": {"max_chars": _validate_positive_int},
+        "missing_trigger": {"terms": _validate_terms},
+        "vague_words": {"terms": _validate_terms},
+        "first_or_second_person": {"terms": _validate_terms},
+        "broad_description": {
+            "over_chars": _validate_positive_int,
+            "terms": _validate_terms,
+            "negative_terms": _validate_terms,
+        },
+        "purpose_section": {"heading": _normalize_heading},
+        "name_too_short": {"min_chars": _validate_positive_int},
+        "name_convention": {},
     },
     "correctness": {
-        "reserved_name": {"terms": partial(_validate_entries, ignore_case=True)},
+        "reserved_name": {"terms": _validate_terms},
     },
 }
 _TOP_LEVEL_KEYS = frozenset({"expected_headers", *_RULE_SECTIONS})
+
+
+def _check_description_lengths(discoverability: dict, source: str) -> None:
+    """Reject a minimum description length above the maximum, which would hide the maximum rule."""
+    minimum = discoverability["description_too_short"]["min_chars"]
+    maximum = discoverability["description_too_long"]["max_chars"]
+    if minimum > maximum:
+        raise QualityConfigError(
+            f"{source}: discoverability.description_too_short.min_chars ({minimum}) must not be greater than "
+            f"discoverability.description_too_long.max_chars ({maximum})"
+        )
 
 
 def _parse_rule_section(section: str, raw: object, source: str, base: dict | None) -> dict:
@@ -228,6 +317,8 @@ def _parse_rule_section(section: str, raw: object, source: str, base: dict | Non
                 for setting, validate_setting in settings.items()
             },
         }
+    if section == "discoverability":
+        _check_description_lengths(parsed, source)
     return parsed
 
 

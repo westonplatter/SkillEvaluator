@@ -55,7 +55,9 @@ efficiency:
     suggestion: "Keep required sections concise; move detailed examples, reference material, and supporting docs to the references/ directory"
     max_tokens: 5000
 
-# Discoverability rules. They overlay the same way as error_handling and efficiency.
+# Discoverability rules. They overlay the same way as error_handling and efficiency. The rules
+# from description_too_short to broad_description check the frontmatter description and are
+# skipped when the skill has none.
 discoverability:
   # The frontmatter description, with surrounding whitespace removed, has fewer than min_chars
   # characters. A skill with no description is not checked here. The finding appends the
@@ -65,6 +67,61 @@ discoverability:
     message: "Description too short (recommend 50-150 chars)"
     suggestion: "Add more context: what tasks does this skill handle?"
     min_chars: 20
+  # The description, with surrounding whitespace removed, has more than max_chars characters.
+  # Checked only when description_too_short does not apply. The finding appends the length and
+  # the maximum to the message.
+  description_too_long:
+    points: 5
+    message: "Description very long (recommend 50-150 chars)"
+    suggestion: "Keep descriptions concise for progressive disclosure"
+    max_chars: 200
+  # The description contains none of the terms (whole word or phrase, any case).
+  missing_trigger:
+    points: 10
+    message: "Description doesn't mention WHEN to use this skill"
+    suggestion: "Add trigger context: 'Use for...', 'When you need to...'"
+    terms: [use, when, for, helps, allows]
+  # The description contains one of the terms (whole word or phrase, any case).
+  vague_words:
+    points: 15
+    message: "Description contains vague words"
+    suggestion: "Be specific about what this skill does"
+    terms: [something, things, stuff, various, general]
+  # The description contains one of the terms (whole word or phrase, any case).
+  first_or_second_person:
+    points: 15
+    message: "Description uses first/second person"
+    suggestion: "Use third person: 'Processes files' not 'I can process'"
+    terms: [i can, i will, you can, you should, your, my, we can]
+  # The description has more than over_chars characters, contains one of the terms and none of
+  # the negative_terms (whole word or phrase, any case).
+  broad_description:
+    points: 5
+    message: "Broad description without negative triggers may cause over-triggering"
+    suggestion: "Add boundary phrases like 'Do NOT use for...'"
+    over_chars: 100
+    terms: [data, files, documents, project, manage, handle, process]
+    negative_terms: [not for, do not use, instead use, except when, not when]
+  # SKILL.md does not contain the heading text anywhere (case-sensitive substring). Checked
+  # whether or not the skill has a description.
+  purpose_section:
+    points: 5
+    message: "No '## Purpose' section"
+    suggestion: "Add purpose section to clarify use cases"
+    heading: "## Purpose"
+  # The skill directory name has fewer than min_chars characters. The finding appends the name.
+  name_too_short:
+    points: 10
+    message: "Skill name very short"
+    suggestion: "Use descriptive names like 'crypto-utils' not 'crypto'"
+    min_chars: 5
+  # The skill directory name does not start with a lowercase letter followed by lowercase
+  # letters, digits, hyphens or underscores. The pattern stays in code. The finding appends the
+  # name.
+  name_convention:
+    points: 10
+    message: "Skill name not following convention"
+    suggestion: "Use lowercase with hyphens: my-skill-name"
 
 # Correctness rules. They overlay the same way as the sections above.
 correctness:

@@ -717,13 +717,15 @@ class QualityScoreValidator(ValidatorBase):
         frontmatter: dict | None,
     ) -> None:
         dim = qs.discoverability
+        rules = self.quality_config["discoverability"]
 
         desc = ""
         if frontmatter:
             desc = str(frontmatter.get("description", "")).strip()
 
         if desc:
-            too_short = self.quality_config["discoverability"]["description_too_short"]
+            too_short = rules["description_too_short"]
+            too_long = rules["description_too_long"]
             if len(desc) < too_short["min_chars"]:
                 if too_short["points"]:
                     dim.deduct(
@@ -732,69 +734,57 @@ class QualityScoreValidator(ValidatorBase):
                         f"{too_short['message']}: {len(desc)} chars, minimum {too_short['min_chars']}",
                         too_short["suggestion"],
                     )
-            elif len(desc) > 200:
-                dim.deduct(
-                    5,
-                    "info",
-                    f"Description very long ({len(desc)} chars, recommend 50-150)",
-                    "Keep descriptions concise for progressive disclosure",
-                )
+            elif len(desc) > too_long["max_chars"]:
+                if too_long["points"]:
+                    dim.deduct(
+                        too_long["points"],
+                        "info",
+                        f"{too_long['message']}: {len(desc)} chars, maximum {too_long['max_chars']}",
+                        too_long["suggestion"],
+                    )
 
-            trigger_words = ["use", "when", "for", "helps", "allows"]
-            if not _contains_any_term(desc, trigger_words):
-                dim.deduct(
-                    10,
-                    "info",
-                    "Description doesn't mention WHEN to use this skill",
-                    "Add trigger context: 'Use for...', 'When you need to...'",
-                )
+            trigger = rules["missing_trigger"]
+            if trigger["points"] and not _contains_any_term(desc, trigger["terms"]):
+                dim.deduct(trigger["points"], "info", trigger["message"], trigger["suggestion"])
 
-            vague_words = ["something", "things", "stuff", "various", "general"]
-            if _contains_any_term(desc, vague_words):
-                dim.deduct(
-                    15,
-                    "warning",
-                    "Description contains vague words",
-                    "Be specific about what this skill does",
-                )
+            vague = rules["vague_words"]
+            if vague["points"] and _contains_any_term(desc, vague["terms"]):
+                dim.deduct(vague["points"], "warning", vague["message"], vague["suggestion"])
 
-            person_phrases = ["i can", "i will", "you can", "you should", "your", "my", "we can"]
-            if _contains_any_term(desc, person_phrases):
-                dim.deduct(
-                    15,
-                    "warning",
-                    "Description uses first/second person",
-                    "Use third person: 'Processes files' not 'I can process'",
-                )
+            person = rules["first_or_second_person"]
+            if person["points"] and _contains_any_term(desc, person["terms"]):
+                dim.deduct(person["points"], "warning", person["message"], person["suggestion"])
 
             # Broad description without negative triggers (M1)
-            generic = ["data", "files", "documents", "project", "manage", "handle", "process"]
-            negatives = ["not for", "do not use", "instead use", "except when", "not when"]
-            if len(desc) > 100 and _contains_any_term(desc, generic) and not _contains_any_term(desc, negatives):
-                dim.deduct(
-                    5,
-                    "info",
-                    "Broad description without negative triggers may cause over-triggering",
-                    "Add boundary phrases like 'Do NOT use for...'",
-                )
+            broad = rules["broad_description"]
+            if (
+                broad["points"]
+                and len(desc) > broad["over_chars"]
+                and _contains_any_term(desc, broad["terms"])
+                and not _contains_any_term(desc, broad["negative_terms"])
+            ):
+                dim.deduct(broad["points"], "info", broad["message"], broad["suggestion"])
 
-        if "## Purpose" not in content:
-            dim.deduct(5, "info", "No '## Purpose' section", "Add purpose section to clarify use cases")
+        purpose = rules["purpose_section"]
+        if purpose["points"] and purpose["heading"] not in content:
+            dim.deduct(purpose["points"], "info", purpose["message"], purpose["suggestion"])
 
         sn = qs.skill_name
-        if len(sn) < 5:
+        name_too_short = rules["name_too_short"]
+        if name_too_short["points"] and len(sn) < name_too_short["min_chars"]:
             dim.deduct(
-                10,
+                name_too_short["points"],
                 "warning",
-                f"Skill name very short: '{sn}'",
-                "Use descriptive names like 'crypto-utils' not 'crypto'",
+                f"{name_too_short['message']}: '{sn}'",
+                name_too_short["suggestion"],
             )
-        if not re.match(r"^[a-z][a-z0-9_-]*$", sn):
+        convention = rules["name_convention"]
+        if convention["points"] and not re.match(r"^[a-z][a-z0-9_-]*$", sn):
             dim.deduct(
-                10,
+                convention["points"],
                 "warning",
-                f"Skill name not following convention: '{sn}'",
-                "Use lowercase with hyphens: my-skill-name",
+                f"{convention['message']}: '{sn}'",
+                convention["suggestion"],
             )
 
     # -----------------------------------------------------------------

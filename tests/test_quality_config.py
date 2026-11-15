@@ -601,7 +601,7 @@ def test_custom_file_with_only_a_description_minimum_keeps_every_other_packaged_
     ("body", "match"),
     [
         ("discoverability: []\n", r"discoverability must be a mapping"),
-        ("discoverability:\n  description_too_long: {}\n", r"unknown key\(s\) in discoverability: description_too_long"),
+        ("discoverability:\n  description_too_wordy: {}\n", r"unknown key\(s\) in discoverability: description_too_wordy"),
         ("discoverability:\n  description_too_short: 20\n", r"discoverability\.description_too_short must be a mapping"),
         (
             "discoverability:\n  description_too_short:\n    min_char: 30\n",
@@ -627,6 +627,151 @@ def test_custom_digest_declares_only_the_discoverability_keys_the_file_sets(tmp_
 
     assert _digest(config_path) == quality_config_digest(
         {"discoverability": {"description_too_short": {"min_chars": 40}}}
+    )
+
+
+# The values each Discoverability rule used when it was hard-coded in quality_score.py.
+PACKAGED_DISCOVERABILITY = {
+    "description_too_short": PACKAGED_DESCRIPTION_TOO_SHORT,
+    "description_too_long": {
+        "points": 5,
+        "message": "Description very long (recommend 50-150 chars)",
+        "suggestion": "Keep descriptions concise for progressive disclosure",
+        "max_chars": 200,
+    },
+    "missing_trigger": {
+        "points": 10,
+        "message": "Description doesn't mention WHEN to use this skill",
+        "suggestion": "Add trigger context: 'Use for...', 'When you need to...'",
+        "terms": ["use", "when", "for", "helps", "allows"],
+    },
+    "vague_words": {
+        "points": 15,
+        "message": "Description contains vague words",
+        "suggestion": "Be specific about what this skill does",
+        "terms": ["something", "things", "stuff", "various", "general"],
+    },
+    "first_or_second_person": {
+        "points": 15,
+        "message": "Description uses first/second person",
+        "suggestion": "Use third person: 'Processes files' not 'I can process'",
+        "terms": ["i can", "i will", "you can", "you should", "your", "my", "we can"],
+    },
+    "broad_description": {
+        "points": 5,
+        "message": "Broad description without negative triggers may cause over-triggering",
+        "suggestion": "Add boundary phrases like 'Do NOT use for...'",
+        "over_chars": 100,
+        "terms": ["data", "files", "documents", "project", "manage", "handle", "process"],
+        "negative_terms": ["not for", "do not use", "instead use", "except when", "not when"],
+    },
+    "purpose_section": {
+        "points": 5,
+        "message": "No '## Purpose' section",
+        "suggestion": "Add purpose section to clarify use cases",
+        "heading": "## Purpose",
+    },
+    "name_too_short": {
+        "points": 10,
+        "message": "Skill name very short",
+        "suggestion": "Use descriptive names like 'crypto-utils' not 'crypto'",
+        "min_chars": 5,
+    },
+    "name_convention": {
+        "points": 10,
+        "message": "Skill name not following convention",
+        "suggestion": "Use lowercase with hyphens: my-skill-name",
+    },
+}
+
+
+def test_packaged_discoverability_matches_former_hard_coded_values() -> None:
+    discoverability = load_quality_config()["discoverability"]
+
+    assert discoverability == PACKAGED_DISCOVERABILITY
+    assert list(discoverability) == list(PACKAGED_DISCOVERABILITY)
+
+
+def test_custom_file_with_one_broad_description_setting_keeps_every_other_packaged_value(tmp_path: Path) -> None:
+    config_path = tmp_path / "quality.yaml"
+    config_path.write_text(
+        "discoverability:\n  broad_description:\n    negative_terms: [avoid for]\n", encoding="utf-8"
+    )
+    packaged = load_quality_config()
+
+    config = load_quality_config(config_path)
+
+    assert config["discoverability"] == {
+        **PACKAGED_DISCOVERABILITY,
+        "broad_description": {**PACKAGED_DISCOVERABILITY["broad_description"], "negative_terms": ["avoid for"]},
+    }
+    assert {key: value for key, value in config.items() if key != "discoverability"} == {
+        key: value for key, value in packaged.items() if key != "discoverability"
+    }
+
+
+def test_purpose_heading_is_normalized_like_expected_headers(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path, "discoverability:\n  purpose_section:\n    heading: '##   Overview  '\n")
+
+    assert load_quality_config(config_path)["discoverability"]["purpose_section"]["heading"] == "## Overview"
+
+
+def test_description_minimum_may_equal_the_maximum(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        "discoverability:\n  description_too_short:\n    min_chars: 120\n"
+        "  description_too_long:\n    max_chars: 120\n",
+    )
+
+    rules = load_quality_config(config_path)["discoverability"]
+    assert rules["description_too_short"]["min_chars"] == rules["description_too_long"]["max_chars"] == 120
+
+
+@pytest.mark.parametrize(
+    ("body", "match"),
+    [
+        (
+            "discoverability:\n  description_too_long:\n    max_chars: 0\n",
+            r"description_too_long\.max_chars must be a positive integer",
+        ),
+        (
+            "discoverability:\n  description_too_short:\n    min_chars: 250\n",
+            r"description_too_short\.min_chars \(250\) must not be greater than "
+            r"discoverability\.description_too_long\.max_chars \(200\)",
+        ),
+        (
+            "discoverability:\n  description_too_long:\n    max_chars: 15\n",
+            r"min_chars \(20\) must not be greater than .*max_chars \(15\)",
+        ),
+        ("discoverability:\n  missing_trigger:\n    terms: []\n", r"missing_trigger\.terms must be a non-empty list"),
+        ("discoverability:\n  vague_words:\n    terms: [stuff, Stuff]\n", r"duplicate entry 'Stuff' in .*vague_words\.terms"),
+        ("discoverability:\n  first_or_second_person:\n    terms: ['  ']\n", r"terms\[0\] must be a non-blank string"),
+        ("discoverability:\n  broad_description:\n    over_chars: 1.5\n", r"over_chars must be a positive integer"),
+        ("discoverability:\n  broad_description:\n    negative_terms: none\n", r"negative_terms must be a non-empty list"),
+        ("discoverability:\n  purpose_section:\n    heading: Purpose\n", r"purpose_section\.heading must be a single ATX"),
+        ("discoverability:\n  name_too_short:\n    min_chars: -1\n", r"name_too_short\.min_chars must be a positive integer"),
+        (
+            "discoverability:\n  name_convention:\n    pattern: '^[a-z]+$'\n",
+            r"unknown key\(s\) in discoverability\.name_convention: pattern \(allowed: message, points, suggestion\)",
+        ),
+        ("discoverability:\n  name_convention:\n    points: -1\n", r"name_convention\.points must be a non-negative"),
+    ],
+)
+def test_quality_config_rejects_invalid_discoverability_rules(tmp_path: Path, body: str, match: str) -> None:
+    config_path = _write_config(tmp_path, body)
+
+    with pytest.raises(QualityConfigError, match=rf"^{tmp_path}.*{match}"):
+        load_quality_config(config_path)
+
+
+def test_custom_digest_declares_only_the_discoverability_rule_keys_the_file_sets(tmp_path: Path) -> None:
+    config_path = tmp_path / "quality.yaml"
+    config_path.write_text(
+        "discoverability: {broad_description: {over_chars: 150}, name_convention: {points: 0}}\n", encoding="utf-8"
+    )
+
+    assert _digest(config_path) == quality_config_digest(
+        {"discoverability": {"broad_description": {"over_chars": 150}, "name_convention": {"points": 0}}}
     )
 
 
