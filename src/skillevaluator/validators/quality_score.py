@@ -734,14 +734,13 @@ class QualityScoreValidator(ValidatorBase):
                         f"{too_short['message']}: {len(desc)} chars, minimum {too_short['min_chars']}",
                         too_short["suggestion"],
                     )
-            elif len(desc) > too_long["max_chars"]:
-                if too_long["points"]:
-                    dim.deduct(
-                        too_long["points"],
-                        "info",
-                        f"{too_long['message']}: {len(desc)} chars, maximum {too_long['max_chars']}",
-                        too_long["suggestion"],
-                    )
+            elif len(desc) > too_long["max_chars"] and too_long["points"]:
+                dim.deduct(
+                    too_long["points"],
+                    "info",
+                    f"{too_long['message']}: {len(desc)} chars, maximum {too_long['max_chars']}",
+                    too_long["suggestion"],
+                )
 
             trigger = rules["missing_trigger"]
             if trigger["points"] and not _contains_any_term(desc, trigger["terms"]):
