@@ -2301,7 +2301,7 @@ class TestEfficiencyRulesConfig:
 
         assert message in _efficiency_messages(default)
         assert message not in _efficiency_messages(disabled)
-        assert [m for m in _efficiency_messages(disabled)] == [m for m in _efficiency_messages(default) if m != message]
+        assert _efficiency_messages(disabled) == [m for m in _efficiency_messages(default) if m != message]
         assert _efficiency_score(disabled) == _efficiency_score(default) + packaged_points
 
     def test_custom_ratio_moves_the_repetition_threshold(self, tmp_path: Path):
