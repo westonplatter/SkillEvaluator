@@ -751,7 +751,7 @@ def test_description_minimum_may_equal_the_maximum(tmp_path: Path) -> None:
         ("discoverability:\n  purpose_section:\n    heading: Purpose\n", r"purpose_section\.heading must be a single ATX"),
         ("discoverability:\n  name_too_short:\n    min_chars: -1\n", r"name_too_short\.min_chars must be a positive integer"),
         (
-            "discoverability:\n  name_convention:\n    pattern: '^[a-z]+$'\n",
+            "discoverability:\n  name_convention:\n    pattern: '^[a-z]+'\n",
             r"unknown key\(s\) in discoverability\.name_convention: pattern \(allowed: message, points, suggestion\)",
         ),
         ("discoverability:\n  name_convention:\n    points: -1\n", r"name_convention\.points must be a non-negative"),
