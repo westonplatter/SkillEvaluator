@@ -70,10 +70,65 @@ class TokenBudgetRule(TypedDict):
     max_tokens: int
 
 
+class LineRepetitionRule(TypedDict):
+    """Deduction when fewer than min_unique_ratio of the non-blank SKILL.md lines are distinct."""
+
+    points: int | float
+    message: str
+    suggestion: str
+    min_unique_ratio: int | float
+
+
+class InstructionTermsRule(TypedDict):
+    """Deduction when the instructions section contains none of the terms."""
+
+    points: int | float
+    message: str
+    suggestion: str
+    headings: list[str]
+    terms: list[str]
+
+
+class InstructionMarkersRule(TypedDict):
+    """Deduction when the instructions section contains none of the markers."""
+
+    points: int | float
+    message: str
+    suggestion: str
+    headings: list[str]
+    markers: list[str]
+
+
+class VagueReferenceFilenameRule(TypedDict):
+    """Deduction for a references/*.md name that is all digits, one of the terms, or under min_chars."""
+
+    points: int | float
+    message: str
+    suggestion: str
+    terms: list[str]
+    min_chars: int
+
+
+class NonDocReferenceRule(TypedDict):
+    """Deduction for a file in references/ with one of the suffixes."""
+
+    points: int | float
+    message: str
+    suggestion: str
+    suffixes: list[str]
+
+
 class EfficiencyConfig(TypedDict):
     """Efficiency rules; a rule with points 0 is skipped."""
 
     token_budget: TokenBudgetRule
+    line_repetition: LineRepetitionRule
+    action_verbs: InstructionTermsRule
+    list_format: InstructionMarkersRule
+    corporate_language: TermsRule
+    vague_reference_filename: VagueReferenceFilenameRule
+    nested_references: PlainRule
+    non_doc_reference: NonDocReferenceRule
 
 
 class DescriptionTooShortRule(TypedDict):
@@ -243,6 +298,34 @@ def _validate_positive_int(value: object, source: str, location: str) -> int:
 
 # Terms are matched as whole words or phrases in any case, so entries differing only in case repeat.
 _validate_terms = partial(_validate_entries, ignore_case=True)
+# Markers are matched as case-sensitive substrings.
+_validate_markers = partial(_validate_entries, ignore_case=False)
+
+
+def _validate_ratio(value: object, source: str, location: str) -> int | float:
+    valid = not isinstance(value, bool) and isinstance(value, (int, float)) and 0 < value <= 1
+    if not valid:
+        raise QualityConfigError(f"{source}: {location} must be a number greater than 0 and at most 1")
+    return value
+
+
+def _validate_headings(value: object, source: str, location: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise QualityConfigError(f"{source}: {location} must be a non-empty list")
+    headings = [_normalize_heading(entry, source, f"{location}[{index}]") for index, entry in enumerate(value)]
+    for index, heading in enumerate(headings):
+        if heading in headings[:index]:
+            raise QualityConfigError(f"{source}: duplicate entry '{heading}' in {location}")
+    return headings
+
+
+def _validate_suffixes(value: object, source: str, location: str) -> list[str]:
+    suffixes = _validate_markers(value, source, location)
+    for index, suffix in enumerate(suffixes):
+        # A file's suffix is the text from its last dot, so a value with a second dot never matches.
+        if not suffix.startswith(".") or suffix.count(".") != 1 or len(suffix) < 2 or "/" in suffix or "\\" in suffix:
+            raise QualityConfigError(f"{source}: {location}[{index}] must be one file suffix, such as '.py'")
+    return suffixes
 
 # Sections made of named rules. Every rule takes points, message and suggestion, plus the
 # rule-specific settings listed here, each with the function that validates it.
@@ -250,11 +333,18 @@ _SettingValidator = Callable[[object, str, str], object]
 _RULE_SECTIONS: dict[str, dict[str, dict[str, _SettingValidator]]] = {
     "error_handling": {
         "mentioned": {"terms": _validate_terms},
-        "scripts": {"markers": partial(_validate_entries, ignore_case=False)},
-        "lib": {"markers": partial(_validate_entries, ignore_case=False)},
+        "scripts": {"markers": _validate_markers},
+        "lib": {"markers": _validate_markers},
     },
     "efficiency": {
         "token_budget": {"max_tokens": _validate_positive_int},
+        "line_repetition": {"min_unique_ratio": _validate_ratio},
+        "action_verbs": {"headings": _validate_headings, "terms": _validate_terms},
+        "list_format": {"headings": _validate_headings, "markers": _validate_markers},
+        "corporate_language": {"terms": _validate_terms},
+        "vague_reference_filename": {"terms": _validate_terms, "min_chars": _validate_positive_int},
+        "nested_references": {},
+        "non_doc_reference": {"suffixes": _validate_suffixes},
     },
     "discoverability": {
         "description_too_short": {"min_chars": _validate_positive_int},

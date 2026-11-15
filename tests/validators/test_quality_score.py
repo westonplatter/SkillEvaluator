@@ -1263,7 +1263,7 @@ class TestQualityScoreDeterministicContracts:
 
         assert {
             "SKILL.md references README.md (pulls human-facing docs into agent context)",
-            "Deeply nested references in mechanisms.md",
+            "Deeply nested references: mechanisms.md",
         }.issubset(messages)
 
     def test_raw_html_encoded_trailing_space_remains_path_content(self, tmp_path: Path):
@@ -1333,7 +1333,7 @@ class TestQualityScoreDeterministicContracts:
 
         assert not result.passed
         assert result.metadata["quality_scores"]["overall_score"] == 98.5
-        assert "Deeply nested references in mechanisms.md" in [finding.message for finding in result.findings]
+        assert "Deeply nested references: mechanisms.md" in [finding.message for finding in result.findings]
 
     def test_percent_encoded_scheme_does_not_normalize_into_readme_reference(self, tmp_path: Path):
         skill_dir = _write_issue_skill(
@@ -1380,7 +1380,7 @@ class TestQualityScoreDeterministicContracts:
 
         messages = _finding_messages(skill_dir)
 
-        assert "Deeply nested references in mechanisms.md" in messages
+        assert "Deeply nested references: mechanisms.md" in messages
 
     @pytest.mark.parametrize(
         "target",
@@ -1397,7 +1397,7 @@ class TestQualityScoreDeterministicContracts:
 
         messages = _finding_messages(skill_dir)
 
-        assert "Deeply nested references in mechanisms.md" in messages
+        assert "Deeply nested references: mechanisms.md" in messages
 
     @pytest.mark.parametrize(
         "target",
@@ -1437,7 +1437,7 @@ class TestQualityScoreDeterministicContracts:
 
         messages = _finding_messages(skill_dir)
 
-        assert "Deeply nested references in mechanisms.md" in messages
+        assert "Deeply nested references: mechanisms.md" in messages
 
     def test_external_url_with_balanced_parentheses_is_not_nested(self, tmp_path: Path):
         skill_dir = _write_issue_skill(tmp_path)
@@ -1477,7 +1477,7 @@ class TestQualityScoreDeterministicContracts:
 
         messages = _finding_messages(skill_dir)
 
-        assert "Deeply nested references in mechanisms.md" in messages
+        assert "Deeply nested references: mechanisms.md" in messages
 
     def test_instruction_action_verbs_do_not_match_inside_words(self, tmp_path: Path):
         messages = _finding_messages(
@@ -2213,3 +2213,146 @@ def test_python_script_skill_still_needs_run_script(tmp_path):
     skill = _script_skill(tmp_path, "run.py", "Run `node scripts/run.py` and show the output.")
 
     assert any("Instructions don't mention 'run_script'" in message for message in _messages(skill))
+
+
+def _write_efficiency_skill(tmp_path: Path, body: str, refs: dict[str, str] | None = None) -> Path:
+    skill_dir = tmp_path / "efficiency-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: efficiency-skill\ndescription: Use for parsing application logs\n---\n\n# Skill\n\n{body}",
+        encoding="utf-8",
+    )
+    if refs:
+        (skill_dir / "references").mkdir()
+        for name, text in refs.items():
+            (skill_dir / "references" / name).write_text(text, encoding="utf-8")
+    return skill_dir
+
+
+def _efficiency_messages(result) -> list[str]:
+    return [issue["message"] for issue in result.metadata["quality_scores"]["dimensions"]["efficiency"]["issues"]]
+
+
+def _efficiency_score(result) -> float:
+    return result.metadata["quality_scores"]["dimensions"]["efficiency"]["score"]
+
+
+# One skill per Efficiency rule that fires it with the packaged config, its message and severity.
+EFFICIENCY_CASES = {
+    "line_repetition": (
+        lambda tmp: _write_efficiency_skill(tmp, "same line\n" * 30),
+        "High line repetition detected",
+        "info",
+    ),
+    "action_verbs": (
+        lambda tmp: _write_efficiency_skill(tmp, "## Instructions\n- The tool is nice.\n"),
+        "Instructions lack clear action verbs",
+        "warning",
+    ),
+    "list_format": (
+        lambda tmp: _write_efficiency_skill(tmp, "## Instructions\nRun the tool now.\n"),
+        "Instructions not in list format",
+        "info",
+    ),
+    "corporate_language": (
+        lambda tmp: _write_efficiency_skill(tmp, "## Purpose\nWe leverage the parser.\n"),
+        "Uses complex/corporate language",
+        "info",
+    ),
+    "vague_reference_filename": (
+        lambda tmp: _write_efficiency_skill(tmp, "## Purpose\nParse logs.\n", {"doc.md": "Plain notes."}),
+        "Non-descriptive filename: doc.md",
+        "info",
+    ),
+    "nested_references": (
+        lambda tmp: _write_efficiency_skill(tmp, "## Purpose\nParse logs.\n", {"guide.md": "See [deep](other/deep.md)."}),
+        "Deeply nested references: guide.md",
+        "warning",
+    ),
+    "non_doc_reference": (
+        lambda tmp: _write_efficiency_skill(tmp, "## Purpose\nParse logs.\n", {"tool.py": "print('hi')\n"}),
+        "Non-doc file in references/: tool.py",
+        "info",
+    ),
+}
+
+
+class TestEfficiencyRulesConfig:
+    @pytest.mark.parametrize("rule", sorted(EFFICIENCY_CASES))
+    def test_packaged_rule_keeps_its_former_points_severity_and_suggestion(self, tmp_path: Path, rule: str):
+        make_skill, message, severity = EFFICIENCY_CASES[rule]
+        packaged = load_quality_config()["efficiency"][rule]
+
+        issues = _validate_with(make_skill(tmp_path), tmp_path).metadata["quality_scores"]["dimensions"]["efficiency"]
+        (issue,) = [i for i in issues["issues"] if i["message"] == message]
+
+        assert issue["deduction"] == packaged["points"]
+        assert issue["suggestion"] == packaged["suggestion"]
+        assert issue["severity"] == severity
+
+    @pytest.mark.parametrize("rule", sorted(EFFICIENCY_CASES))
+    def test_zero_points_turns_the_rule_off_without_changing_other_rules(self, tmp_path: Path, rule: str):
+        make_skill, message, _ = EFFICIENCY_CASES[rule]
+        skill_dir = make_skill(tmp_path)
+        packaged_points = load_quality_config()["efficiency"][rule]["points"]
+
+        default = _validate_with(skill_dir, tmp_path)
+        disabled = _validate_with(skill_dir, tmp_path, f"efficiency:\n  {rule}:\n    points: 0\n")
+
+        assert message in _efficiency_messages(default)
+        assert message not in _efficiency_messages(disabled)
+        assert [m for m in _efficiency_messages(disabled)] == [m for m in _efficiency_messages(default) if m != message]
+        assert _efficiency_score(disabled) == _efficiency_score(default) + packaged_points
+
+    def test_custom_ratio_moves_the_repetition_threshold(self, tmp_path: Path):
+        # Frontmatter (its two "---" lines repeat), a title and 4 lines written twice: 8 of 13 non-blank lines are distinct.
+        skill_dir = _write_efficiency_skill(tmp_path, "".join(f"line {i}\nline {i}\n" for i in range(4)))
+        config = "efficiency:\n  line_repetition:\n    min_unique_ratio: {}\n"
+
+        default = _validate_with(skill_dir, tmp_path)
+        lowered = _validate_with(skill_dir, tmp_path, config.format(0.6))
+
+        assert "High line repetition detected" in _efficiency_messages(default)
+        assert "High line repetition detected" not in _efficiency_messages(lowered)
+
+    def test_custom_headings_choose_the_instructions_section_per_rule(self, tmp_path: Path):
+        skill_dir = _write_efficiency_skill(tmp_path, "## Steps\nThe tool is nice.\n")
+        verbs_only = "efficiency:\n  action_verbs:\n    headings: ['## Steps']\n"
+
+        default = _validate_with(skill_dir, tmp_path)
+        custom = _validate_with(skill_dir, tmp_path, verbs_only)
+
+        assert "Instructions lack clear action verbs" not in _efficiency_messages(default)
+        assert "Instructions lack clear action verbs" in _efficiency_messages(custom)
+        assert "Instructions not in list format" not in _efficiency_messages(custom)
+
+    def test_custom_markers_and_terms_replace_the_packaged_lists(self, tmp_path: Path):
+        skill_dir = _write_efficiency_skill(tmp_path, "## Instructions\nParse first; then summarize.\n")
+        config = "efficiency:\n  action_verbs:\n    terms: [parse]\n  list_format:\n    markers: [';']\n"
+
+        default = _validate_with(skill_dir, tmp_path)
+        custom = _validate_with(skill_dir, tmp_path, config)
+
+        assert {"Instructions lack clear action verbs", "Instructions not in list format"} <= set(_efficiency_messages(default))
+        assert not {"Instructions lack clear action verbs", "Instructions not in list format"} & set(_efficiency_messages(custom))
+
+    def test_custom_vague_filename_terms_and_minimum(self, tmp_path: Path):
+        config = "efficiency:\n  vague_reference_filename:\n    terms: [Notes]\n    min_chars: 3\n"
+        short = _write_efficiency_skill(tmp_path / "short", "## Purpose\nParse logs.\n", {"abc.md": "x"})
+        listed = _write_efficiency_skill(tmp_path / "listed", "## Purpose\nParse logs.\n", {"notes.md": "x"})
+        digits = _write_efficiency_skill(tmp_path / "digits", "## Purpose\nParse logs.\n", {"12345.md": "x"})
+
+        assert not any("Non-descriptive" in m for m in _efficiency_messages(_validate_with(short, tmp_path, config)))
+        assert "Non-descriptive filename: notes.md" in _efficiency_messages(_validate_with(listed, tmp_path, config))
+        assert "Non-descriptive filename: 12345.md" in _efficiency_messages(_validate_with(digits, tmp_path, config))
+
+    def test_custom_suffixes_replace_the_packaged_list(self, tmp_path: Path):
+        skill_dir = _write_efficiency_skill(
+            tmp_path, "## Purpose\nParse logs.\n", {"tool.py": "print()\n", "notes.txt": "plain\n"}
+        )
+
+        result = _validate_with(skill_dir, tmp_path, "efficiency:\n  non_doc_reference:\n    suffixes: [.txt]\n")
+
+        assert [m for m in _efficiency_messages(result) if m.startswith("Non-doc")] == [
+            "Non-doc file in references/: notes.txt"
+        ]

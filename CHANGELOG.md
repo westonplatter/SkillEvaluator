@@ -164,6 +164,21 @@ All notable changes to SkillEvaluator are documented in this file.
   very long (254 chars, recommend 50-150)`. Other messages are unchanged. The
   packaged `quality_config` digest changes once, because
   `quality-default.yaml` gained the rules.
+- Move the remaining Efficiency rules into the `efficiency` section of the
+  `--quality-config` file, so every Efficiency rule is now set there:
+  `line_repetition` (`min_unique_ratio`), `action_verbs` (`headings`,
+  `terms`), `list_format` (`headings`, `markers`), `corporate_language`
+  (`terms`), `vague_reference_filename` (`terms`, `min_chars`),
+  `nested_references` and `non_doc_reference` (`suffixes`). Each rule also
+  sets `points`, `message` and `suggestion`, and `points: 0` turns it off.
+  Each rule's settings hold every threshold and list it uses; severities and
+  the nested-link detection stay in code. The two instruction rules each take
+  their own `headings`, so they can look at different sections. Scores,
+  severities and finding order are unchanged without a custom file. The
+  nested-references message follows the other `references/` findings: `Deeply
+  nested references: guide.md` instead of `Deeply nested references in
+  guide.md`. Other messages are unchanged. The packaged `quality_config`
+  digest changes once, because `quality-default.yaml` gained the rules.
 
 - Tier 1 **Incomplete referenced artifact analysis (AE1)** findings from
   SkillSpector now say why SkillSpector stopped inspecting the file that a skill

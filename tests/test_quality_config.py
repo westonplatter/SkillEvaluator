@@ -835,3 +835,136 @@ def test_custom_digest_declares_only_the_correctness_keys_the_file_sets(tmp_path
     config_path.write_text("correctness: {reserved_name: {terms: [acme]}}\n", encoding="utf-8")
 
     assert _digest(config_path) == quality_config_digest({"correctness": {"reserved_name": {"terms": ["acme"]}}})
+
+
+# The values each Efficiency rule used when it was hard-coded in quality_score.py.
+PACKAGED_EFFICIENCY = {
+    "token_budget": PACKAGED_TOKEN_BUDGET,
+    "line_repetition": {
+        "points": 10,
+        "message": "High line repetition detected",
+        "suggestion": "Remove duplicate instructions or use references",
+        "min_unique_ratio": 0.7,
+    },
+    "action_verbs": {
+        "points": 15,
+        "message": "Instructions lack clear action verbs",
+        "suggestion": "Use imperative: 'Use run_script with...', 'Call activate_skill...'",
+        "headings": ["## Instructions", "## Usage"],
+        "terms": ["use", "call", "run", "execute", "pass", "set", "add", "mark", "update", "keep"],
+    },
+    "list_format": {
+        "points": 5,
+        "message": "Instructions not in list format",
+        "suggestion": "Use bullet points or numbered steps for clarity",
+        "headings": ["## Instructions", "## Usage"],
+        "markers": ["- ", "1.", "* "],
+    },
+    "corporate_language": {
+        "points": 5,
+        "message": "Uses complex/corporate language",
+        "suggestion": "Use simple, direct language: 'use' not 'utilize'",
+        "terms": ["utilize", "facilitate", "leverage", "paradigm", "synergy"],
+    },
+    "vague_reference_filename": {
+        "points": 5,
+        "message": "Non-descriptive filename",
+        "suggestion": "Use descriptive names: 'form_validation_rules.md' not 'doc2.md'",
+        "terms": ["doc", "file", "data", "info", "misc", "temp"],
+        "min_chars": 4,
+    },
+    "nested_references": {
+        "points": 10,
+        "message": "Deeply nested references",
+        "suggestion": "Keep references one level deep from SKILL.md",
+    },
+    "non_doc_reference": {
+        "points": 5,
+        "message": "Non-doc file in references/",
+        "suggestion": "Code belongs in scripts/, data in assets/. references/ is for .md docs.",
+        "suffixes": [".py", ".sh", ".json", ".csv", ".yaml", ".yml", ".toml"],
+    },
+}
+
+
+def test_packaged_efficiency_matches_former_hard_coded_values() -> None:
+    efficiency = load_quality_config()["efficiency"]
+
+    assert efficiency == PACKAGED_EFFICIENCY
+    assert list(efficiency) == list(PACKAGED_EFFICIENCY)
+
+
+def test_custom_file_with_one_list_format_setting_keeps_every_other_packaged_value(tmp_path: Path) -> None:
+    config_path = tmp_path / "quality.yaml"
+    config_path.write_text("efficiency:\n  list_format:\n    headings: ['## Steps']\n", encoding="utf-8")
+    packaged = load_quality_config()
+
+    config = load_quality_config(config_path)
+
+    assert config["efficiency"] == {
+        **PACKAGED_EFFICIENCY,
+        "list_format": {**PACKAGED_EFFICIENCY["list_format"], "headings": ["## Steps"]},
+    }
+    assert {key: value for key, value in config.items() if key != "efficiency"} == {
+        key: value for key, value in packaged.items() if key != "efficiency"
+    }
+
+
+def test_instruction_headings_are_normalized_like_expected_headers(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path, "efficiency:\n  action_verbs:\n    headings: ['##  Steps  ', '### How to']\n")
+
+    assert load_quality_config(config_path)["efficiency"]["action_verbs"]["headings"] == ["## Steps", "### How to"]
+
+
+@pytest.mark.parametrize("ratio", [1, 0.5, 0.01])
+def test_repetition_ratio_accepts_numbers_above_zero_up_to_one(tmp_path: Path, ratio: float) -> None:
+    config_path = _write_config(tmp_path, f"efficiency:\n  line_repetition:\n    min_unique_ratio: {ratio}\n")
+
+    assert load_quality_config(config_path)["efficiency"]["line_repetition"]["min_unique_ratio"] == ratio
+
+
+@pytest.mark.parametrize(
+    ("body", "match"),
+    [
+        ("efficiency:\n  line_repetition:\n    min_unique_ratio: 0\n", r"min_unique_ratio must be a number greater than 0"),
+        ("efficiency:\n  line_repetition:\n    min_unique_ratio: 1.5\n", r"min_unique_ratio must be a number greater than 0"),
+        ("efficiency:\n  line_repetition:\n    min_unique_ratio: true\n", r"min_unique_ratio must be a number greater than 0"),
+        ("efficiency:\n  line_repetition:\n    min_unique_ratio: .nan\n", r"min_unique_ratio must be a number greater than 0"),
+        ("efficiency:\n  action_verbs:\n    headings: []\n", r"action_verbs\.headings must be a non-empty list"),
+        ("efficiency:\n  action_verbs:\n    headings: [Usage]\n", r"action_verbs\.headings\[0\] must be a single ATX"),
+        (
+            "efficiency:\n  list_format:\n    headings: ['## Usage', '##  Usage']\n",
+            r"duplicate entry '## Usage' in efficiency\.list_format\.headings",
+        ),
+        ("efficiency:\n  action_verbs:\n    terms: [Run, run]\n", r"duplicate entry 'run' in efficiency\.action_verbs\.terms"),
+        ("efficiency:\n  list_format:\n    markers: []\n", r"list_format\.markers must be a non-empty list"),
+        ("efficiency:\n  corporate_language:\n    terms: leverage\n", r"corporate_language\.terms must be a non-empty list"),
+        (
+            "efficiency:\n  vague_reference_filename:\n    min_chars: 0\n",
+            r"vague_reference_filename\.min_chars must be a positive integer",
+        ),
+        ("efficiency:\n  non_doc_reference:\n    suffixes: [py]\n", r"suffixes\[0\] must be one file suffix"),
+        ("efficiency:\n  non_doc_reference:\n    suffixes: [.tar.gz]\n", r"suffixes\[0\] must be one file suffix"),
+        ("efficiency:\n  non_doc_reference:\n    suffixes: [.py, .py]\n", r"duplicate entry '\.py'"),
+        (
+            "efficiency:\n  nested_references:\n    max_depth: 2\n",
+            r"unknown key\(s\) in efficiency\.nested_references: max_depth \(allowed: message, points, suggestion\)",
+        ),
+    ],
+)
+def test_quality_config_rejects_invalid_efficiency_rules(tmp_path: Path, body: str, match: str) -> None:
+    config_path = _write_config(tmp_path, body)
+
+    with pytest.raises(QualityConfigError, match=rf"^{tmp_path}.*{match}"):
+        load_quality_config(config_path)
+
+
+def test_custom_digest_declares_only_the_efficiency_rule_keys_the_file_sets(tmp_path: Path) -> None:
+    config_path = tmp_path / "quality.yaml"
+    config_path.write_text(
+        "efficiency: {line_repetition: {min_unique_ratio: 0.5}, nested_references: {points: 0}}\n", encoding="utf-8"
+    )
+
+    assert _digest(config_path) == quality_config_digest(
+        {"efficiency": {"line_repetition": {"min_unique_ratio": 0.5}, "nested_references": {"points": 0}}}
+    )

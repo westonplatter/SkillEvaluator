@@ -231,6 +231,19 @@ def _normalized_quality_local_path(href: str) -> str | None:
     return posixpath.normpath(path)
 
 
+def _instructions_section(content: str, headings: list[str]) -> str:
+    """Return the text under the first of the headings that content contains, up to the next ``## `` heading.
+
+    The heading must also sit on a line of its own to yield text; otherwise the section is empty.
+    """
+    for heading in headings:
+        if heading not in content:
+            continue
+        parts = content.split(f"\n{heading}\n", 1)
+        return parts[1].split("\n## ", 1)[0] if len(parts) > 1 else ""
+    return ""
+
+
 def _has_nested_markdown_reference(content: str) -> bool:
     """Return whether a reference document links to another local Markdown document."""
     for target in markdown_link_targets(content):
@@ -870,94 +883,78 @@ class QualityScoreValidator(ValidatorBase):
                 budget["suggestion"],
             )
 
+        rules = self.quality_config["efficiency"]
+
         # Repetition (compare against non-empty lines to avoid false positives from blank lines)
+        repetition = rules["line_repetition"]
         non_empty = [ln for ln in lines if ln.strip()]
         stripped = {ln.strip() for ln in non_empty}
-        if stripped and len(stripped) < len(non_empty) * 0.7:
-            dim.deduct(
-                10,
-                "info",
-                "High line repetition detected",
-                "Remove duplicate instructions or use references",
-            )
+        if repetition["points"] and stripped and len(stripped) < len(non_empty) * repetition["min_unique_ratio"]:
+            dim.deduct(repetition["points"], "info", repetition["message"], repetition["suggestion"])
 
         # Instruction clarity
-        for heading in ("## Instructions", "## Usage"):
-            if heading not in content:
-                continue
-            parts = content.split(f"\n{heading}\n", 1)
-            section = parts[1].split("\n## ", 1)[0] if len(parts) > 1 else ""
-            break
-        else:
-            section = ""
-        if section:
-            action_words = ["use", "call", "run", "execute", "pass", "set", "add", "mark", "update", "keep"]
-            if not _contains_any_term(section, action_words):
-                dim.deduct(
-                    15,
-                    "warning",
-                    "Instructions lack clear action verbs",
-                    "Use imperative: 'Use run_script with...', 'Call activate_skill...'",
-                )
-            if not ("- " in section or "1." in section or "* " in section):
-                dim.deduct(
-                    5,
-                    "info",
-                    "Instructions not in list format",
-                    "Use bullet points or numbered steps for clarity",
-                )
+        action_verbs = rules["action_verbs"]
+        if action_verbs["points"]:
+            section = _instructions_section(content, action_verbs["headings"])
+            if section and not _contains_any_term(section, action_verbs["terms"]):
+                dim.deduct(action_verbs["points"], "warning", action_verbs["message"], action_verbs["suggestion"])
+        list_format = rules["list_format"]
+        if list_format["points"]:
+            section = _instructions_section(content, list_format["headings"])
+            if section and not any(marker in section for marker in list_format["markers"]):
+                dim.deduct(list_format["points"], "info", list_format["message"], list_format["suggestion"])
 
         # Corporate buzzwords
-        complex_words = ["utilize", "facilitate", "leverage", "paradigm", "synergy"]
-        if _contains_any_term(content, complex_words):
-            dim.deduct(
-                5,
-                "info",
-                "Uses complex/corporate language",
-                "Use simple, direct language: 'use' not 'utilize'",
-            )
+        corporate = rules["corporate_language"]
+        if corporate["points"] and _contains_any_term(content, corporate["terms"]):
+            dim.deduct(corporate["points"], "info", corporate["message"], corporate["suggestion"])
 
         # Reference file naming
         refs_dir = skill_path / "references"
         if refs_dir.exists():
-            vague = ["doc", "file", "data", "info", "misc", "temp"]
-            for ref in refs_dir.glob("*.md"):
-                stem = ref.stem.lower()
-                if stem.isdigit() or stem in vague or len(stem) < 4:
-                    dim.deduct(
-                        5,
-                        "info",
-                        f"Non-descriptive filename: {ref.name}",
-                        "Use descriptive names: 'form_validation_rules.md' not 'doc2.md'",
-                    )
-                    break
-
-            # Deeply nested references
-            for ref in refs_dir.glob("*.md"):
-                try:
-                    rc = ref.read_text(encoding="utf-8")
-                    if _has_nested_markdown_reference(rc):
+            vague_name = rules["vague_reference_filename"]
+            if vague_name["points"]:
+                vague_stems = {term.lower() for term in vague_name["terms"]}
+                for ref in refs_dir.glob("*.md"):
+                    stem = ref.stem.lower()
+                    if stem.isdigit() or stem in vague_stems or len(stem) < vague_name["min_chars"]:
                         dim.deduct(
-                            10,
-                            "warning",
-                            f"Deeply nested references in {ref.name}",
-                            "Keep references one level deep from SKILL.md",
+                            vague_name["points"],
+                            "info",
+                            f"{vague_name['message']}: {ref.name}",
+                            vague_name["suggestion"],
                         )
                         break
-                except Exception:
-                    pass
+
+            # Deeply nested references
+            nested = rules["nested_references"]
+            if nested["points"]:
+                for ref in refs_dir.glob("*.md"):
+                    try:
+                        rc = ref.read_text(encoding="utf-8")
+                        if _has_nested_markdown_reference(rc):
+                            dim.deduct(
+                                nested["points"],
+                                "warning",
+                                f"{nested['message']}: {ref.name}",
+                                nested["suggestion"],
+                            )
+                            break
+                    except Exception:
+                        pass
 
             # Non-doc files in references/
-            non_doc = {".py", ".sh", ".json", ".csv", ".yaml", ".yml", ".toml"}
-            for ref in refs_dir.iterdir():
-                if ref.is_file() and ref.suffix in non_doc:
-                    dim.deduct(
-                        5,
-                        "info",
-                        f"Non-doc file in references/: {ref.name}",
-                        "Code belongs in scripts/, data in assets/. references/ is for .md docs.",
-                    )
-                    break
+            non_doc = rules["non_doc_reference"]
+            if non_doc["points"]:
+                for ref in refs_dir.iterdir():
+                    if ref.is_file() and ref.suffix in non_doc["suffixes"]:
+                        dim.deduct(
+                            non_doc["points"],
+                            "info",
+                            f"{non_doc['message']}: {ref.name}",
+                            non_doc["suggestion"],
+                        )
+                        break
 
     # -----------------------------------------------------------------
     # SKILL_SPEC field checks (adds to correctness)

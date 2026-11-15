@@ -54,6 +54,58 @@ efficiency:
     message: "Large skill. Per agentskills.io, SKILL.md should be concise (~500 lines) — large skill bodies increase token cost after invocation; long or unfocused top-level descriptions can degrade agent routing accuracy"
     suggestion: "Keep required sections concise; move detailed examples, reference material, and supporting docs to the references/ directory"
     max_tokens: 5000
+  # Fewer than min_unique_ratio of the non-blank lines in SKILL.md are distinct after
+  # surrounding whitespace is removed.
+  line_repetition:
+    points: 10
+    message: "High line repetition detected"
+    suggestion: "Remove duplicate instructions or use references"
+    min_unique_ratio: 0.7
+  # The instructions section contains none of the terms (whole word or phrase, any case). The
+  # section is the text under the first of the headings that SKILL.md contains, up to the next
+  # "## " heading; the rule is skipped when there is no such section or it is empty.
+  action_verbs:
+    points: 15
+    message: "Instructions lack clear action verbs"
+    suggestion: "Use imperative: 'Use run_script with...', 'Call activate_skill...'"
+    headings: ["## Instructions", "## Usage"]
+    terms: [use, call, run, execute, pass, set, add, mark, update, keep]
+  # The instructions section, found as for action_verbs, contains none of the markers
+  # (case-sensitive substring).
+  list_format:
+    points: 5
+    message: "Instructions not in list format"
+    suggestion: "Use bullet points or numbered steps for clarity"
+    headings: ["## Instructions", "## Usage"]
+    markers: ["- ", "1.", "* "]
+  # SKILL.md contains one of the terms (whole word or phrase, any case).
+  corporate_language:
+    points: 5
+    message: "Uses complex/corporate language"
+    suggestion: "Use simple, direct language: 'use' not 'utilize'"
+    terms: [utilize, facilitate, leverage, paradigm, synergy]
+  # A references/*.md file name, without .md and in lowercase, is all digits, is one of the
+  # terms (any case), or has fewer than min_chars characters. Reported once, for the first such
+  # file; the finding appends its name.
+  vague_reference_filename:
+    points: 5
+    message: "Non-descriptive filename"
+    suggestion: "Use descriptive names: 'form_validation_rules.md' not 'doc2.md'"
+    terms: [doc, file, data, info, misc, temp]
+    min_chars: 4
+  # A references/*.md file links to another local Markdown file other than ../SKILL.md.
+  # Reported once, for the first such file; the finding appends its name.
+  nested_references:
+    points: 10
+    message: "Deeply nested references"
+    suggestion: "Keep references one level deep from SKILL.md"
+  # A file directly in references/ has one of the suffixes (case-sensitive). Reported once, for
+  # the first such file; the finding appends its name.
+  non_doc_reference:
+    points: 5
+    message: "Non-doc file in references/"
+    suggestion: "Code belongs in scripts/, data in assets/. references/ is for .md docs."
+    suffixes: [.py, .sh, .json, .csv, .yaml, .yml, .toml]
 
 # Discoverability rules. They overlay the same way as error_handling and efficiency. The rules
 # from description_too_short to broad_description check the frontmatter description and are

@@ -486,7 +486,7 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
       If a quality score changes unexpectedly, inspect the finding message rather than adding keywords. The checker rewards usable instructions and evidence in their relevant context, not vocabulary alone.
     </Tip>
 
-    **Quality config file.** Pass `--quality-config PATH` to `quality-check`, `tier1`, or `validate` to adjust the rules below. The file has five optional sections: `expected_headers` and `error_handling` for Reliability, `efficiency` for the token budget, `discoverability` for every Discoverability rule, and `correctness` for reserved words in the skill name. Anything you leave out keeps its packaged value from `quality-default.yaml`, and any list you set replaces the packaged list rather than merging with it.
+    **Quality config file.** Pass `--quality-config PATH` to `quality-check`, `tier1`, or `validate` to adjust the rules below. The file has five optional sections: `expected_headers` and `error_handling` for Reliability, `efficiency` for every Efficiency rule, `discoverability` for every Discoverability rule, and `correctness` for reserved words in the skill name. Anything you leave out keeps its packaged value from `quality-default.yaml`, and any list you set replaces the packaged list rather than merging with it.
 
     **Expected headings.** Reliability deducts points when `SKILL.md` lacks an expected heading. The packaged `quality-default.yaml` expects `## Prerequisites` (or `## Requirements`), `## Limitations`, and `## Troubleshooting` (or `## Common Issues` or `## FAQ`), each worth 5 points. Omit `expected_headers` to keep that list. A list you set replaces it, so copy any default entries you want to keep. Set `expected_headers: []` to turn heading checks off.
 
@@ -558,6 +558,28 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
 
     The size is an estimate, not a tokenizer count: the number of characters in `SKILL.md`, frontmatter included, divided by 4 and rounded down. Files in `references/` and `scripts/` are not counted. The finding appends the estimate and the limit to `message`, as in `Large skill. ...: ~6200 estimated tokens at 4 characters per token, recommended max <5000; a real tokenizer may count more`. Reports show the limit in force as `recommended_max_tokens` in the quality metrics, whether or not the rule is turned off.
 
+    **Other Efficiency rules.** The rest of the Efficiency rules are set in the same `efficiency` section and follow the same overlay: each takes `points`, `message`, and `suggestion` plus the settings below, a list you set replaces the packaged list, and `points: 0` turns the rule off. This file treats `## Steps` as the instructions heading for both instruction rules and changes nothing else:
+
+    ```yaml title="quality.yaml"
+    efficiency:
+      action_verbs:
+        headings: ["## Steps"]
+      list_format:
+        headings: ["## Steps"]
+    ```
+
+    | Rule | Packaged points | Settings (packaged value) | Deducts when |
+    | --- | --- | --- | --- |
+    | `line_repetition` | `10` | `min_unique_ratio` (`0.7`) | Fewer than this share of the non-blank lines in `SKILL.md`, frontmatter included, are distinct after surrounding whitespace is removed |
+    | `action_verbs` | `15` | `headings` (`## Instructions`, `## Usage`), `terms` (`use`, `call`, `run`, `execute`, `pass`, `set`, `add`, `mark`, `update`, `keep`) | The instructions section contains none of the terms |
+    | `list_format` | `5` | `headings` (`## Instructions`, `## Usage`), `markers` (`- `, `1.`, `* `) | The instructions section contains none of the markers |
+    | `corporate_language` | `5` | `terms` (`utilize`, `facilitate`, `leverage`, `paradigm`, `synergy`) | `SKILL.md` contains one of the terms |
+    | `vague_reference_filename` | `5` | `terms` (`doc`, `file`, `data`, `info`, `misc`, `temp`), `min_chars` (`4`) | A `references/*.md` file name without `.md` is all digits, is one of the terms, or has fewer than `min_chars` characters |
+    | `nested_references` | `10` | none | A `references/*.md` file links to another local Markdown file other than `../SKILL.md` |
+    | `non_doc_reference` | `5` | `suffixes` (`.py`, `.sh`, `.json`, `.csv`, `.yaml`, `.yml`, `.toml`) | A file directly in `references/` has one of the suffixes |
+
+    `min_unique_ratio` is a number greater than 0 and at most 1. The instructions section is the text under the first heading in `headings` that `SKILL.md` contains, up to the next `## ` heading; each instruction rule reads its own `headings`, and neither rule applies when the section is missing or empty. `headings` entries must be single ATX Markdown headings. `terms` match as whole words or phrases in any case; `markers` and `suffixes` match exactly, and each suffix is one dot and the text after it, such as `.py`. The three `references/` rules report only the first matching file and append its name to `message`, as in `Non-doc file in references/: tool.py`.
+
     **Discoverability rules.** Every Discoverability rule is set in the `discoverability` section. Each rule takes `points`, `message`, and `suggestion`, plus the settings listed below. An omitted key keeps its packaged value, a list you set replaces the packaged list, and `points: 0` turns the rule off, so it adds no finding. This file raises the minimum description length, lets "avoid for" count as a negative trigger, and changes nothing else:
 
     ```yaml title="quality.yaml"
@@ -601,7 +623,7 @@ For `validate`, the default set is `schema`, `version`, `security`, `pii`, `lice
 
     The finding appends the matched terms to `message`, as in `Name contains reserved word: claude`. Several matches still deduct `points` once. This is an error-level rule: its finding is HIGH and fails the quality check whatever the score, so `points: 0` removes that failure as well as the deduction. The schema check has its own fixed list (`anthropic`, `claude`) that this file does not change, so with the default checks a name containing either word is still rejected there. The other Correctness rules are not configurable yet.
 
-    The file is checked before any validation runs. A file that is missing, unreadable, not UTF-8, invalid YAML, has an unknown key (such as `point` instead of `points`), lists the same heading twice, has a negative or non-numeric `points`, a `max_tokens`, `min_chars`, `max_chars`, or `over_chars` that is not a positive whole number, a description minimum greater than the description maximum, a `heading` that is not a single Markdown heading, an empty `terms`, `negative_terms`, or `markers` list, or a repeated entry in one of those lists is a usage error: the command exits with code 2 and names the file and the problem. `validate` checks the file even when `--checks` leaves out `quality`.
+    The file is checked before any validation runs. A file that is missing, unreadable, not UTF-8, invalid YAML, has an unknown key (such as `point` instead of `points`), lists the same heading twice, has a negative or non-numeric `points`, a `max_tokens`, `min_chars`, `max_chars`, or `over_chars` that is not a positive whole number, a `min_unique_ratio` that is not above 0 and at most 1, a description minimum greater than the description maximum, a `heading` or `headings` entry that is not a single Markdown heading, a suffix that is not one dot and the text after it, an empty `terms`, `negative_terms`, `headings`, `markers`, or `suffixes` list, or a repeated entry in one of those lists is a usage error: the command exits with code 2 and names the file and the problem. `validate` checks the file even when `--checks` leaves out `quality`.
 
     ```text title="Example error"
     Error: Invalid value for '--quality-config': quality.yaml: unknown key(s) in expected_headers[0]: point (allowed: alternatives, heading, message, points, suggestion)
