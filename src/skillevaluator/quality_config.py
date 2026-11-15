@@ -178,23 +178,23 @@ def _validate_positive_int(value: object, source: str, location: str) -> int:
     return value
 
 
-# Sections made of named rules. Every rule takes points, message and suggestion, plus the one
-# rule-specific key listed here with the function that validates it.
-_RuleSetting = tuple[str, Callable[[object, str, str], object]]
-_RULE_SECTIONS: dict[str, dict[str, _RuleSetting]] = {
+# Sections made of named rules. Every rule takes points, message and suggestion, plus the
+# rule-specific settings listed here, each with the function that validates it.
+_SettingValidator = Callable[[object, str, str], object]
+_RULE_SECTIONS: dict[str, dict[str, dict[str, _SettingValidator]]] = {
     "error_handling": {
-        "mentioned": ("terms", partial(_validate_entries, ignore_case=True)),
-        "scripts": ("markers", partial(_validate_entries, ignore_case=False)),
-        "lib": ("markers", partial(_validate_entries, ignore_case=False)),
+        "mentioned": {"terms": partial(_validate_entries, ignore_case=True)},
+        "scripts": {"markers": partial(_validate_entries, ignore_case=False)},
+        "lib": {"markers": partial(_validate_entries, ignore_case=False)},
     },
     "efficiency": {
-        "token_budget": ("max_tokens", _validate_positive_int),
+        "token_budget": {"max_tokens": _validate_positive_int},
     },
     "discoverability": {
-        "description_too_short": ("min_chars", _validate_positive_int),
+        "description_too_short": {"min_chars": _validate_positive_int},
     },
     "correctness": {
-        "reserved_name": ("terms", partial(_validate_entries, ignore_case=True)),
+        "reserved_name": {"terms": partial(_validate_entries, ignore_case=True)},
     },
 }
 _TOP_LEVEL_KEYS = frozenset({"expected_headers", *_RULE_SECTIONS})
@@ -207,12 +207,12 @@ def _parse_rule_section(section: str, raw: object, source: str, base: dict | Non
         raise QualityConfigError(f"{source}: {section} must be a mapping")
     _reject_unknown_keys(raw, frozenset(rules), source, section)
     parsed = {}
-    for name, (setting, validate_setting) in rules.items():
+    for name, settings in rules.items():
         location = f"{section}.{name}"
         block = raw.get(name) if base is None else raw.get(name, {})
         if not isinstance(block, dict):
             raise QualityConfigError(f"{source}: {location} must be a mapping")
-        allowed = frozenset({"points", "message", "suggestion", setting})
+        allowed = frozenset({"points", "message", "suggestion", *settings})
         _reject_unknown_keys(block, allowed, source, location)
         if base is None:
             missing = sorted(allowed - block.keys())
@@ -223,7 +223,10 @@ def _parse_rule_section(section: str, raw: object, source: str, base: dict | Non
             "points": _validate_points(merged["points"], source, location),
             "message": _validate_text(merged["message"], source, f"{location}.message"),
             "suggestion": _validate_text(merged["suggestion"], source, f"{location}.suggestion"),
-            setting: validate_setting(merged[setting], source, f"{location}.{setting}"),
+            **{
+                setting: validate_setting(merged[setting], source, f"{location}.{setting}")
+                for setting, validate_setting in settings.items()
+            },
         }
     return parsed
 
